@@ -53,6 +53,46 @@ def process_short(args):
 		rtncode = e.returncode
 	return rtncode
 
+def make_ff(args, vargs, streams):
+	ffstr = 'blah'
+	ff = dotdict({})
+	vidcount = 0
+	audcount = 0
+	for num in streams['numberofstreams']:
+		if streams[num+'.codec_type'] == 'video':
+			themap = {}
+			themap['-pix_fmt:' + str(vidcount)] = streams[num+'.pix_fmt']
+			themap['-r:' + str(vidcount)] = streams[num+'.r_frame_rate']
+			themap['-s:' + str(vidcount)] = streams[num+'.width'] + 'x' + streams[num+'.height']
+			if streams[num+'.codec_name'] == 'jpeg2000':
+				themap['-c:v:' + str(vidcount)] = 'libopenjpeg'
+			else:
+				themap['-c:v:' + str(vidcount)] = streams[num+'.codec_name']
+			ff[num] = themap
+			vidcount = vidcount + 1
+		elif streams[num+'.codec_type'] == 'audio':
+			themap = {}
+			themap['-c:a:' + str(audcount)] = streams[num+'.codec_name']
+			themap['-b:a:' + str(audcount)] = streams[num+'.sample_rate']
+			themap['-ac:' + str(audcount)] = streams[num+'.channels']
+			ff[num] = themap
+			audcount = audcount + 1
+	return ff
+
+def make_ffstr(ff, args, vargs, streams):
+	ffstr = ''
+	ffprefix = 'ffmpeg -i ' + args.i
+	maps = '-map 0:v? -map 0:a? -map 0:d? -map_metadata 0 -map_metadata:s:v 0:s:v? -map_metadata:s:a 0:s:a?'
+	ffsuffix = '-threads 0 -id3v2_version 3 -write_id3v2 1 -write_bext 1 ' + vargs.endObj
+	for stream in streams['numberofstreams']:
+		for opts in ff[stream]:
+			print opts
+			ffstr = ffstr + ' ' + opts + ' ' + ff[stream][opts]
+
+	ffstr = ffprefix + ' ' + maps + ffstr + ' ' + ffsuffix
+	print ffstr
+	return ffstr
+
 def probe_streams(obj):
 	'''
 	returns dictionary with each stream element
@@ -94,6 +134,19 @@ def ffgo(ffstr):
 		print returncode
 	return returncode
 
+def get_longest_duration(streams):
+	'''
+	get the duration of the longest stream
+	'''
+	if len(streams['numberofstreams']) == 1:
+		duration = float(streams['0.duration'])
+	else:
+		duration = float(streams['0.duration'])
+		for stream in streams['numberofstreams']:
+			if float(streams[stream + '.duration']) > duration:
+				duration = float(streams[stream + '.duration'])
+	return duration
+
 def init_args():
 	'''
 	initialize argument dictionary from command line
@@ -104,7 +157,7 @@ def init_args():
 	parser.add_argument('-t', '--time', dest='t', type=int, default='100', help='the time in seconds of indv concats')
 	return parser.parse_args()
 
-def input_validate(args):
+def init_input_validate(args):
 	'''
 	make sure we can run the thing
 	'''
@@ -120,7 +173,7 @@ def init():
 	handles the intialization of the script
 	'''
 	args = init_args()
-	input_validate(args)
+	init_input_validate(args)
 	streams = probe_streams(args.i)
 	vargs = dotdict({})
 	if args.o:
@@ -132,32 +185,30 @@ def init():
 	vargs.duration = get_longest_duration(streams)
 	return args, vargs, streams
 
-def get_longest_duration(streams):
-	print streams['numberofstreams']
-	if len(streams['numberofstreams']) == 1:
-		duration = float(streams['0.duration'])
-	else:
-		duration = float(streams['0.duration'])
-		for stream in streams['numberofstreams']:
-			if float(streams[stream + '.duration']) > duration:
-				duration = float(streams[stream + '.duration'])
-	return duration
+
 
 def main():
 	'''
 	do the thing
 	'''
 	args, vargs, streams = init()
-	print streams
-	'''for stream in streams:
+	#print streams
+	for stream in streams:
 		print stream
-		print streams[stream]'''
+		print streams[stream]
 	with cd(vargs.workingDir):
 		if vargs.duration <= args.t:
 			print "procshort"
+			ffstr = make_ff(args, vargs, streams)
 			#revWorked = process_short(args)
 		else:
 			print "proclong"
+			ff = make_ff(args, vargs, streams)
+			for f in ff:
+				print f
+				print ff[f]
+			ffstr = make_ffstr(ff, args, vargs, streams)
+			worked = ffgo(ffstr)
 			'''revWorked = process(args)
 			#concatenate the revsered output from slicer loop
 			if revWorked is True:
